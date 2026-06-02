@@ -4,7 +4,7 @@ use std::path::Path;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_motiongfx::manager::TimelineComplete;
-use bevy_motiongfx::{BevyMotionGfxPlugin, MotionGfxSet, prelude::*};
+use bevy_motiongfx::{BevyMotionGfxPlugin, prelude::*};
 use bevy_vello::{VelloPlugin, prelude::*};
 use velyst::{VelystPlugin, prelude::*};
 
@@ -16,19 +16,22 @@ const SAVE_DIR: &str = "frames/";
 fn main() -> AppExit {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Wave Renderer (Headless)".into(),
+                    resolution: (1920, 1080).into(),
+                    resizable: false,
+                    visible: false, // not working on niri
+                    ..default()
+                }),
+                ..default()
+            }),
             VelloPlugin::default(),
             VelystPlugin,
             BevyMotionGfxPlugin,
             PipelinesReadyPlugin,
         ))
         .register_typst_func::<WaveFunc>()
-        .configure_sets(
-            PostUpdate,
-            (MotionGfxSet::Controller, MotionGfxSet::Sample)
-                .chain()
-                .before(VelystSet::PrepareFunc),
-        )
         .add_systems(PostUpdate, sync_wave.in_set(VelystSet::PrepareFunc))
         .add_systems(Startup, (setup, build_timeline, setup_save_path).chain())
         .add_systems(OnEnter(PipelineState::Ready), start_recording)
@@ -121,7 +124,43 @@ fn check_final_frame(
     mut app_exit: MessageWriter<AppExit>,
 ) {
     if incomplete_players.is_empty() && exit_timer.0.tick(time.delta()).is_finished() {
-        app_exit.write(AppExit::Success);
+        info!("Compiling video sequence via ffmpeg");
+        let output_result = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-framerate",
+                "60",
+                "-i",
+                "frames/frame_%05d.png",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "output.mp4",
+            ])
+            .output();
+
+        match output_result {
+            Ok(output) => {
+                info!(
+                    "ffmpeg stderr: {}",
+                    String::from_utf8_lossy(&output.stderr).into_owned()
+                );
+                if output.status.success() {
+                    app_exit.write(AppExit::Success);
+                } else if let Some(code) = output.status.code() {
+                    error!("ffmpeg failed with exit code: {code}");
+                    app_exit.write(AppExit::error());
+                } else {
+                    error!("ffmpeg terminated by signal");
+                    app_exit.write(AppExit::error());
+                }
+            }
+            Err(e) => {
+                error!("Failed to spawn ffmpeg: {e}");
+                app_exit.write(AppExit::error());
+            }
+        }
     }
 }
 

@@ -1,12 +1,10 @@
-#let PI = 3.142
-
 #let wave_gen(func, frequency, amplitude, time, resolution) = {
   let result = ()
   let inv_res = 1.0 / resolution
   for i in range(0, resolution + 1) {
     result.push((
       100% * i * inv_res,
-      (func((time + PI * float(i) / resolution) * frequency) * amplitude) - 50%,
+      (func((time + calc.pi * float(i) / resolution) * frequency) * amplitude) - 50%,
     ))
   }
   result
